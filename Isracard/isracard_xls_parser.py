@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
-from typing import NamedTuple, List, Tuple, Any
+from typing import NamedTuple, List, Tuple, Any, Callable
 
 import pandas as pd
 
-from rows import is_empty_cell, is_title_row, is_transaction_heading_row, is_empty_row, is_end_of_transaction_row, \
+from Isracard.rows import is_empty_cell, is_title_row, is_transaction_heading_row, is_empty_row, is_end_of_transaction_row, \
     is_non_transaction_data_row
 
 
 class IsracardParser:
     class Transaction(NamedTuple):
-        date: datetime.date
-        store: str
+        date: str
+        business_name: str
         transaction_amount: float
         original_currency: str
         billing_amount: float
@@ -63,7 +63,18 @@ class IsracardParser:
         return holder
 
     @staticmethod
-    def parse_transaction_rows(row_iterator) -> List[Transaction]:
+    def parse_local_transaction_row(row_tuple: Tuple) -> IsracardParser.Transaction:
+        return IsracardParser.Transaction(*row_tuple)
+
+    @staticmethod
+    def parse_oversea_transaction_row(row_tuple: Tuple) -> IsracardParser.Transaction:
+        adj_tup = tuple([item for i, item in enumerate(row_tuple) if i != 1] + [row_tuple[-1]])
+        return IsracardParser.Transaction(*adj_tup)
+
+    @staticmethod
+    def parse_transaction_rows(row_iterator,
+                               transaction_parser: Callable[[Tuple], IsracardParser.Transaction]) -> \
+            List[IsracardParser.Transaction]:
         IsracardParser.skip_heading_rows(row_iterator)
         transactions = list()
         for row in row_iterator:
@@ -71,7 +82,7 @@ class IsracardParser:
                 break
             elif is_non_transaction_data_row(row):
                 continue
-            transactions.append(IsracardParser.Transaction(*row))
+            transactions.append(transaction_parser(row))
         return transactions
 
     @staticmethod
@@ -84,8 +95,10 @@ class IsracardParser:
         card_row_tuple = next(row_iterator)
         card_type, last_numbers, billing_date = IsracardParser.parse_card_details(card_row_tuple)
         try:
-            local_transactions = IsracardParser.parse_transaction_rows(row_iterator)  # locals
-            overseas_transactions = IsracardParser.parse_transaction_rows(row_iterator)  # overseas
+            local_transactions = IsracardParser.parse_transaction_rows(row_iterator,
+                                                                       IsracardParser.parse_local_transaction_row)
+            overseas_transactions = IsracardParser.parse_transaction_rows(row_iterator,
+                                                                          IsracardParser.parse_oversea_transaction_row)
         except IsracardParser.ParserException as exc:
             if not exc.empty_row:
                 raise
